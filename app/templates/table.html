@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}OpenTimeStats — Table{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Requests</h1>
+  <span class="text-muted small" id="total-label"></span>
+</div>
+
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+
+    <!-- Preset buttons -->
+    <div class="preset-group" id="t-presets" role="group" aria-label="Date presets">
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="1"   onclick="setPreset(1,   this)">Last day</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="7"   onclick="setPreset(7,   this)">Last week</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="30"  onclick="setPreset(30,  this)">Last month</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="365" onclick="setPreset(365, this)">Last year</button>
+    </div>
+
+    <div class="row g-3 align-items-end">
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold">Status</label>
+        <select class="form-select form-select-sm" id="f-status">
+          <option value="">All</option>
+          <option value="pending">Pending</option>
+          <option value="partial">Partial</option>
+          <option value="complete">Complete</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small fw-semibold">Calendar</label>
+        <select class="form-select form-select-sm" id="f-calendar">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold">From</label>
+        <input type="date" class="form-control form-control-sm" id="f-from" oninput="clearPreset()">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold">To</label>
+        <input type="date" class="form-control form-control-sm" id="f-to" oninput="clearPreset()">
+      </div>
+      <div class="col-12 col-md-3 d-flex gap-2">
+        <button class="btn btn-primary btn-sm flex-fill" onclick="applyFilters()">
+          <i class="bi bi-funnel me-1"></i>Filter
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="resetFilters()">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0 small">
+        <thead class="table-light" id="t-head">
+          <tr>
+            <th class="ps-3 col-xs-hide">#</th>
+            <th>File</th>
+            <th class="col-sm-hide">Created (UTC)</th>
+            <th>Status</th>
+            <th class="col-xs-hide">First confirm</th>
+            <th>Download</th>
+            <!-- calendar columns added by JS -->
+          </tr>
+        </thead>
+        <tbody id="t-body">
+          <tr><td colspan="5" class="text-center text-muted py-5">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pagination -->
+<div class="d-flex justify-content-between align-items-center mt-3">
+  <div class="text-muted small" id="pag-info"></div>
+  <nav><ul class="pagination pagination-sm mb-0" id="pag-ul"></ul></nav>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PER_PAGE = 25;
+let currentPage = 1;
+let calendars = [];
+
+// ── presets ────────────────────────────────────────────────────────────────
+function dateStr(d) {
+  return d.toISOString().slice(0, 10);   // "YYYY-MM-DD"
+}
+
+function setPreset(days, btn) {
+  const to   = new Date();
+  const from = new Date(to.getTime() - days * 86400000);
+  document.getElementById('f-from').value = dateStr(from);
+  document.getElementById('f-to').value   = dateStr(to);
+  document.querySelectorAll('#t-presets .btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadTable(1);
+}
+
+function clearPreset() {
+  document.querySelectorAll('#t-presets .btn').forEach(b => b.classList.remove('active'));
+}
+
+// ── bootstrap ──────────────────────────────────────────────────────────────
+async function init() {
+  const rows = await fetch('/api/calendars').then(r => r.json());
+  calendars = rows;
+
+  const sel = document.getElementById('f-calendar');
+  rows.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.url; o.textContent = c.name;
+    sel.appendChild(o);
+  });
+
+  // Extend header with calendar columns
+  const tr = document.querySelector('#t-head tr');
+  rows.forEach(c => {
+    const th = document.createElement('th');
+    th.textContent = c.name;
+    th.title = c.url;
+    th.className = 'col-sm-hide';
+    tr.appendChild(th);
+  });
+
+  // Apply last-week preset as default
+  const weekBtn = document.querySelector('#t-presets [data-days="7"]');
+  const to   = new Date();
+  const from = new Date(to.getTime() - 7 * 86400000);
+  document.getElementById('f-from').value = dateStr(from);
+  document.getElementById('f-to').value   = dateStr(to);
+  weekBtn.classList.add('active');
+
+  loadTable(1);
+}
+
+// ── load table ─────────────────────────────────────────────────────────────
+async function loadTable(page) {
+  currentPage = page;
+  const p = buildParams(page);
+  const d = await fetch('/api/requests?' + p).then(r => r.json());
+
+  document.getElementById('total-label').textContent = `${d.total} request${d.total !== 1 ? 's' : ''}`;
+
+  const from = (page - 1) * PER_PAGE + 1;
+  const to   = Math.min(page * PER_PAGE, d.total);
+  document.getElementById('pag-info').textContent =
+    d.total ? `Showing ${from}–${to} of ${d.total}` : '';
+
+  const tbody = document.getElementById('t-body');
+  if (!d.requests.length) {
+    const span = calendars.length + 5;
+    tbody.innerHTML = `<tr><td colspan="${span}" class="text-center text-muted py-5">No requests found</td></tr>`;
+    renderPagination(0, 1);
+    return;
+  }
+
+  tbody.innerHTML = d.requests.map(req => {
+    const attMap = Object.fromEntries((req.attestations || []).map(a => [a.calendar_url, a]));
+    const calCells = calendars.map(c => {
+      const a = attMap[c.url];
+      if (!a) return '<td class="text-muted col-sm-hide">—</td>';
+      if (a.status === 'confirmed') {
+        const bh = a.block_height ? `<br><span class="text-muted" title="block height">#${a.block_height}</span>` : '';
+        return `<td class="text-success fw-semibold col-sm-hide">${fmtDelta(a.delta_seconds)}${bh}</td>`;
+      }
+      return '<td class="text-muted fst-italic col-sm-hide">pending</td>';
+    }).join('');
+
+    const dlFile  = `<a href="/download/${req.filename}" class="btn btn-outline-secondary btn-sm p-1" title="Download file" download><i class="bi bi-file-text"></i></a>`;
+    const dlProof = `<a href="/download/${req.filename}.ots" class="btn btn-outline-primary btn-sm p-1 ms-1" title="Download OTS proof" download><i class="bi bi-shield-check"></i></a>`;
+
+    return `<tr>
+      <td class="ps-3 text-muted col-xs-hide">${req.id}</td>
+      <td><code>${req.filename}</code></td>
+      <td class="text-muted col-sm-hide">${fmtDate(req.created_at)}</td>
+      <td>${statusBadge(req.status)}</td>
+      <td class="col-xs-hide">${fmtDelta(req.first_delta)}</td>
+      <td class="text-nowrap">${dlFile}${dlProof}</td>
+      ${calCells}
+    </tr>`;
+  }).join('');
+
+  renderPagination(d.pages, page);
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+function buildParams(page) {
+  const p = new URLSearchParams({ page, per_page: PER_PAGE });
+  const status   = document.getElementById('f-status').value;
+  const calendar = document.getElementById('f-calendar').value;
+  const from     = document.getElementById('f-from').value;
+  const to       = document.getElementById('f-to').value;
+  if (status)   p.set('status', status);
+  if (calendar) p.set('calendar', calendar);
+  if (from)     p.set('date_from', from);
+  if (to)       p.set('date_to', to + 'T23:59:59');
+  return p.toString();
+}
+
+function applyFilters() { loadTable(1); }
+
+function resetFilters() {
+  ['f-status', 'f-calendar', 'f-from', 'f-to'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  clearPreset();
+  loadTable(1);
+}
+
+function renderPagination(pages, current) {
+  const ul = document.getElementById('pag-ul');
+  if (pages <= 1) { ul.innerHTML = ''; return; }
+
+  const lo = Math.max(1, current - 2);
+  const hi = Math.min(pages, current + 2);
+
+  let html = `<li class="page-item ${current===1?'disabled':''}">
+    <a class="page-link" href="#" onclick="loadTable(${current-1});return false">«</a></li>`;
+  for (let i = lo; i <= hi; i++) {
+    html += `<li class="page-item ${i===current?'active':''}">
+      <a class="page-link" href="#" onclick="loadTable(${i});return false">${i}</a></li>`;
+  }
+  html += `<li class="page-item ${current===pages?'disabled':''}">
+    <a class="page-link" href="#" onclick="loadTable(${current+1});return false">»</a></li>`;
+  ul.innerHTML = html;
+}
+
+init();
+</script>
+{% endblock %}

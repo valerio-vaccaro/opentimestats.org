@@ -1,0 +1,95 @@
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+body { background-color: #f5f6fa; }
+
+.navbar-brand { letter-spacing: .02em; }
+
+.card { border-radius: .75rem; }
+.card-header {
+  border-radius: .75rem .75rem 0 0 !important;
+  border-bottom: 1px solid rgba(0,0,0,.06);
+}
+
+.display-6 { font-size: 2.2rem; }
+
+.table th {
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #6c757d;
+  font-weight: 600;
+}
+.table td { font-size: .85rem; vertical-align: middle; }
+
+code {
+  font-size: .8rem;
+  color: #495057;
+  background: #e9ecef;
+  padding: .1em .35em;
+  border-radius: .25rem;
+}
+
+footer { background-color: #f5f6fa; }
+
+canvas { max-height: 340px; }
+
+/* ── Bottom navigation bar (mobile only) ───────────────────────────────────── */
+.bottom-nav {
+  background-color: #212529;
+  border-top: 1px solid rgba(255,255,255,.1);
+}
+.bottom-nav a {
+  color: rgba(255,255,255,.65);
+  transition: color .15s, background-color .15s;
+}
+.bottom-nav a:hover,
+.bottom-nav a.active {
+  color: #fff;
+  background-color: rgba(255,255,255,.08);
+}
+.bottom-nav a.active { border-top: 2px solid #0d6efd; }
+
+/* Reserve space so content is never hidden behind the bottom nav */
+@media (max-width: 991.98px) {
+  main.container { padding-bottom: 5rem !important; }
+}
+
+/* ── Preset button groups — allow wrapping on small screens ────────────────── */
+.preset-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin-bottom: .75rem;
+}
+.preset-group .btn {
+  border-radius: .375rem !important;  /* override btn-group square corners */
+  flex: 1 0 auto;
+}
+
+/* ── Touch-friendly icon buttons ───────────────────────────────────────────── */
+@media (max-width: 767.98px) {
+  .btn-icon { padding: .4rem .5rem !important; }
+
+  /* Smaller stat counters on phones */
+  .display-6 { font-size: 1.75rem; }
+
+  /* Slightly smaller chart canvas height so it fits without scrolling */
+  canvas { max-height: 240px; }
+
+  /* Tighten card padding */
+  .card-body { padding: .85rem; }
+
+  /* Make date/time inputs full-width */
+  input[type="datetime-local"],
+  input[type="date"] { font-size: .9rem; }
+
+  /* Pagination — show fewer page numbers */
+  .pagination .page-item:not(.active):not(:first-child):not(:last-child) { display: none; }
+}
+
+/* ── Hide low-priority table columns on small screens ──────────────────────── */
+@media (max-width: 575.98px) {
+  .col-xs-hide { display: none !important; }
+}
+@media (min-width: 576px) and (max-width: 767.98px) {
+  .col-sm-hide { display: none !important; }
+}

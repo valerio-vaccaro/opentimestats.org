@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}OpenTimeStats — Charts{% endblock %}
+
+{% block content %}
+<h1 class="h4 mb-3">Charts</h1>
+
+<!-- Date filter -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+
+    <!-- Preset buttons — wrap on small screens -->
+    <div class="preset-group" id="cf-presets" role="group" aria-label="Date presets">
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="1"   onclick="setPreset(1,   this)">Last day</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="7"   onclick="setPreset(7,   this)">Last week</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="30"  onclick="setPreset(30,  this)">Last month</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-days="365" onclick="setPreset(365, this)">Last year</button>
+    </div>
+
+    <div class="row g-2">
+      <div class="col-6 col-md-4">
+        <label class="form-label small fw-semibold">From</label>
+        <input type="datetime-local" class="form-control form-control-sm" id="cf-from" oninput="clearPreset()">
+      </div>
+      <div class="col-6 col-md-4">
+        <label class="form-label small fw-semibold">To</label>
+        <input type="datetime-local" class="form-control form-control-sm" id="cf-to" oninput="clearPreset()">
+      </div>
+      <div class="col-12 col-md-4 d-flex align-items-end">
+        <button class="btn btn-primary btn-sm w-100" onclick="loadCharts()">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Calendar performance -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white py-3">
+    <h6 class="mb-0 fw-semibold">Confirmation time per calendar</h6>
+    <small class="text-muted d-none d-sm-block">Min / Median / Average / Max in minutes for each calendar server</small>
+  </div>
+  <div class="card-body">
+    <div id="no-cal-data" class="text-center text-muted py-5 d-none">No confirmed attestations yet.</div>
+    <canvas id="calChart"></canvas>
+  </div>
+</div>
+
+<!-- First-confirmation timeline -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white py-3">
+    <h6 class="mb-0 fw-semibold">First confirmation timeline</h6>
+    <small class="text-muted d-none d-sm-block">Each dot is one timestamped file. Color = final status.</small>
+  </div>
+  <div class="card-body">
+    <div id="no-tl-data" class="text-center text-muted py-5 d-none">No confirmed data yet.</div>
+    <canvas id="tlChart"></canvas>
+  </div>
+</div>
+
+<!-- Per-calendar timelines (injected by JS) -->
+<div id="cal-timelines"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script>
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 16);
+}
+function nowLocal() {
+  return new Date().toISOString().slice(0, 16);
+}
+function setPreset(days, btn) {
+  document.getElementById('cf-from').value = daysAgo(days);
+  document.getElementById('cf-to').value   = nowLocal();
+  document.querySelectorAll('#cf-presets .btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadCharts();
+}
+function clearPreset() {
+  document.querySelectorAll('#cf-presets .btn').forEach(b => b.classList.remove('active'));
+}
+
+const weekBtn = document.querySelector('#cf-presets [data-days="7"]');
+setPreset(7, weekBtn);
+</script>
+{% endblock %}
