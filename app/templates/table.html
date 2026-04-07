@@ -237,5 +237,6 @@ function renderPagination(pages, current) {
 }
 
 init();
+setInterval(() => loadTable(currentPage), 10000);
 </script>
 {% endblock %}
