@@ -20,6 +20,16 @@ body { background-color: #f5f6fa; }
 }
 .table td { font-size: .85rem; vertical-align: middle; }
 
+/* Prevent long filenames from blowing table layout */
+td code {
+  display: inline-block;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 code {
   font-size: .8rem;
   color: #495057;
@@ -36,10 +46,17 @@ canvas { max-height: 340px; }
 .bottom-nav {
   background-color: #212529;
   border-top: 1px solid rgba(255,255,255,.1);
+  /* iOS home indicator safe area */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 .bottom-nav a {
   color: rgba(255,255,255,.65);
   transition: color .15s, background-color .15s;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 .bottom-nav a:hover,
 .bottom-nav a.active {
@@ -50,7 +67,9 @@ canvas { max-height: 340px; }
 
 /* Reserve space so content is never hidden behind the bottom nav */
 @media (max-width: 991.98px) {
-  main.container { padding-bottom: 5rem !important; }
+  main.container {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)) !important;
+  }
 }
 
 /* ── Preset button groups — allow wrapping on small screens ────────────────── */
@@ -78,12 +97,16 @@ canvas { max-height: 340px; }
   /* Tighten card padding */
   .card-body { padding: .85rem; }
 
-  /* Make date/time inputs full-width */
-  input[type="datetime-local"],
-  input[type="date"] { font-size: .9rem; }
+  /* Prevent iOS Safari from zooming when tapping any input or select.
+     iOS zooms when focused font-size < 16px; override Bootstrap's -sm sizes. */
+  input, select, textarea,
+  .form-control, .form-control-sm,
+  .form-select, .form-select-sm {
+    font-size: 1rem !important;
+  }
 
-  /* Pagination — show fewer page numbers */
-  .pagination .page-item:not(.active):not(:first-child):not(:last-child) { display: none; }
+  /* Shorter filename codes in table cells */
+  td code { max-width: 12ch; }
 }
 
 /* ── Hide low-priority table columns on small screens ──────────────────────── */
