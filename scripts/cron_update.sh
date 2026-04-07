@@ -6,6 +6,8 @@
 
 set -euo pipefail
 
+export PATH="/usr/local/bin:${PATH}"
+
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')] cron_update"
 

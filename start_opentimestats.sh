@@ -13,6 +13,8 @@
 
 set -euo pipefail
 
+export PATH="/usr/local/bin:${PATH}"
+
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Tunable defaults — override via environment variables
