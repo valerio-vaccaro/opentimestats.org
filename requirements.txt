@@ -2,5 +2,6 @@ Flask
 Flask-SQLAlchemy
 Flask-Migrate
 python-dotenv
+gunicorn
 # mysqlclient      # uncomment for MySQL; requires libmysqlclient-dev
 # PyMySQL          # pure-Python MySQL alternative: set DATABASE_URL=mysql+pymysql://...
