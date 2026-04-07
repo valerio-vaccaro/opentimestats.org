@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -37,7 +38,7 @@ def fmt_delta(seconds: float) -> str:
     return f"{seconds/3600:.2f}h"
 
 
-def upgrade_request(req: TimestampRequest, now: datetime) -> str | None:
+def upgrade_request(req: TimestampRequest, now: datetime) -> Optional[str]:
     """Upgrade one request. Returns a one-line summary string, or None if skipped."""
     ots_path = os.path.join(FILES_DIR, req.filename + '.ots')
     if not os.path.exists(ots_path):
