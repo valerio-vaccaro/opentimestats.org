@@ -139,7 +139,7 @@ async function loadRecent() {
       <td><code class="small">${r.filename}</code></td>
       <td class="small text-muted col-sm-hide">${date}</td>
       <td>${statusBadge(r.status)}</td>
-      <td class="small col-xs-hide">${fmtDelta(r.first_delta)}</td>
+      <td class="small col-xs-hide">${fmtDelta(r.first_delta)}${r.first_confirmed_at ? `<br><span class="text-muted">${fmtDate(r.first_confirmed_at)}</span>` : ''}</td>
       <td class="text-nowrap">${dlFile}${dlProof}</td>
     </tr>`;
   }).join('');

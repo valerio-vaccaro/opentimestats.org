@@ -9,7 +9,7 @@ Suggested crontab (every 10 minutes):
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,7 +23,7 @@ CALENDARS = Config.OTS_CALENDARS
 
 
 def main():
-    now      = datetime.utcnow()
+    now      = datetime.now(timezone.utc).replace(tzinfo=None)
     filename = f"{int(now.timestamp())}.txt"
 
     os.makedirs(FILES_DIR, exist_ok=True)

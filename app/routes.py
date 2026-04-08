@@ -2,7 +2,7 @@ import os
 import re
 import statistics
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, send_from_directory
@@ -168,7 +168,7 @@ def api_timeline():
         result.append({
             'id': req.id,
             'filename': req.filename,
-            'created_at': req.created_at.isoformat(),
+            'created_at': req.created_at.replace(tzinfo=timezone.utc).isoformat(),
             'first_delta': min(deltas),
             'status': req.status,
         })
@@ -209,7 +209,7 @@ def api_calendar_timeline():
                 'points': [],
             }
         by_cal[url]['points'].append({
-            'created_at': req.created_at.isoformat(),
+            'created_at': req.created_at.replace(tzinfo=timezone.utc).isoformat(),
             'delta_seconds': att.delta_seconds,
             'filename': req.filename,
         })
@@ -279,7 +279,7 @@ def api_create_now():
     ots_cli   = current_app.config['OTS_CLI']
     calendars = current_app.config['OTS_CALENDARS']
 
-    now      = datetime.utcnow()
+    now      = datetime.now(timezone.utc).replace(tzinfo=None)
     filename = f"{int(now.timestamp())}.txt"
     os.makedirs(files_dir, exist_ok=True)
     filepath = os.path.join(files_dir, filename)

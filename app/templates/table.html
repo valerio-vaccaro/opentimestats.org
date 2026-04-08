@@ -172,7 +172,8 @@ async function loadTable(page) {
       if (!a) return '<td class="text-muted col-sm-hide">—</td>';
       if (a.status === 'confirmed') {
         const bh = a.block_height ? `<br><span class="text-muted" title="block height">#${a.block_height}</span>` : '';
-        return `<td class="text-success fw-semibold col-sm-hide">${fmtDelta(a.delta_seconds)}${bh}</td>`;
+        const at = a.confirmed_at ? `<br><span class="text-muted">${fmtDate(a.confirmed_at)}</span>` : '';
+        return `<td class="text-success fw-semibold col-sm-hide">${fmtDelta(a.delta_seconds)}${bh}${at}</td>`;
       }
       return '<td class="text-muted fst-italic col-sm-hide">pending</td>';
     }).join('');
@@ -185,7 +186,7 @@ async function loadTable(page) {
       <td><code>${req.filename}</code></td>
       <td class="text-muted col-sm-hide">${fmtDate(req.created_at)}</td>
       <td>${statusBadge(req.status)}</td>
-      <td class="col-xs-hide">${fmtDelta(req.first_delta)}</td>
+      <td class="col-xs-hide">${fmtDelta(req.first_delta)}${req.first_confirmed_at ? `<br><span class="text-muted">${fmtDate(req.first_confirmed_at)}</span>` : ''}</td>
       <td class="text-nowrap">${dlFile}${dlProof}</td>
       ${calCells}
     </tr>`;

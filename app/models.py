@@ -1,6 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from run import db
+
+
+def _utc_iso(dt: datetime) -> str:
+    """Return an ISO-8601 string with explicit UTC offset for a naive-UTC datetime."""
+    return dt.replace(tzinfo=timezone.utc).isoformat()
 
 
 class TimestampRequest(db.Model):
@@ -21,14 +26,17 @@ class TimestampRequest(db.Model):
 
     def to_dict(self):
         att_dicts = [a.to_dict() for a in self.attestations]
-        confirmed_deltas = [a.delta_seconds for a in self.attestations if a.delta_seconds is not None]
+        confirmed_atts = [a for a in self.attestations if a.delta_seconds is not None]
+        confirmed_deltas = [a.delta_seconds for a in confirmed_atts]
+        first_att = min(confirmed_atts, key=lambda a: a.delta_seconds, default=None)
         return {
             'id': self.id,
             'filename': self.filename,
-            'created_at': self.created_at.isoformat(),
+            'created_at': _utc_iso(self.created_at),
             'status': self.status,
             'attestations': att_dicts,
             'first_delta': min(confirmed_deltas) if confirmed_deltas else None,
+            'first_confirmed_at': _utc_iso(first_att.confirmed_at) if first_att and first_att.confirmed_at else None,
             'full_delta': max(confirmed_deltas) if self.status == 'complete' and confirmed_deltas else None,
         }
 
@@ -70,7 +78,7 @@ class CalendarAttestation(db.Model):
             'calendar_url': self.calendar_url,
             'calendar_name': self.calendar_name,
             'status': self.status,
-            'confirmed_at': self.confirmed_at.isoformat() if self.confirmed_at else None,
+            'confirmed_at': _utc_iso(self.confirmed_at) if self.confirmed_at else None,
             'block_height': self.block_height,
             'delta_seconds': self.delta_seconds,
         }
