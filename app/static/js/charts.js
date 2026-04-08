@@ -117,7 +117,7 @@ async function loadTlChart(dateFrom, dateTo) {
   data.forEach(d => {
     const key = d.status in byStatus ? d.status : 'pending';
     byStatus[key].push({
-      x: new Date(d.created_at + 'Z').getTime(),
+      x: new Date(d.created_at).getTime(),
       y: +(d.first_delta / 60).toFixed(2),
       filename: d.filename,
     });
@@ -141,8 +141,11 @@ async function loadTlChart(dateFrom, dateTo) {
           label: status.charAt(0).toUpperCase() + status.slice(1),
           data: pts,
           backgroundColor: COLORS[status],
+          borderColor: COLORS[status],
           pointRadius: 5,
           pointHoverRadius: 7,
+          showLine: true,
+          tension: 0.3,
         })),
     },
     options: {
@@ -243,7 +246,7 @@ async function loadCalTimelines(dateFrom, dateTo) {
     canvas.classList.remove('d-none');
 
     const pts = cal.points.map(p => ({
-      x: new Date(p.created_at + 'Z').getTime(),
+      x: new Date(p.created_at).getTime(),
       y: +(p.delta_seconds / 60).toFixed(2),
       filename: p.filename,
     }));
@@ -256,8 +259,11 @@ async function loadCalTimelines(dateFrom, dateTo) {
           label: cal.calendar_name,
           data: pts,
           backgroundColor: color,
+          borderColor: color,
           pointRadius: 5,
           pointHoverRadius: 7,
+          showLine: true,
+          tension: 0.3,
         }],
       },
       options: {
