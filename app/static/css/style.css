@@ -109,6 +109,16 @@ canvas { max-height: 340px; }
   td code { max-width: 12ch; }
 }
 
+/* ── Sortable column headers ────────────────────────────────────────────────── */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th.sortable:hover { background-color: rgba(0,0,0,.04); }
+th.sortable .sort-icon { opacity: .45; font-size: .8em; }
+th.sortable.text-primary .sort-icon { opacity: 1; }
+
 /* ── Hide low-priority table columns on small screens ──────────────────────── */
 @media (max-width: 575.98px) {
   .col-xs-hide { display: none !important; }

@@ -40,18 +40,21 @@ def api_overview():
     partial  = db.session.query(func.count(TimestampRequest.id)).filter_by(status='partial').scalar() or 0
     pending  = db.session.query(func.count(TimestampRequest.id)).filter_by(status='pending').scalar() or 0
 
-    confirmed_atts = (
-        db.session.query(CalendarAttestation)
+    confirmed_rows = (
+        db.session.query(CalendarAttestation, TimestampRequest)
+        .join(TimestampRequest, CalendarAttestation.request_id == TimestampRequest.id)
         .filter(CalendarAttestation.status == 'confirmed',
-                CalendarAttestation.delta_seconds.isnot(None))
+                CalendarAttestation.confirmed_at.isnot(None))
         .all()
     )
 
     # Smallest delta per request → average of those
     first_by_req: dict[int, float] = {}
     cal_deltas: dict[str, list[float]] = {}
-    for att in confirmed_atts:
+    for att, req in confirmed_rows:
         d = att.delta_seconds
+        if d is None:
+            continue
         rid = att.request_id
         if rid not in first_by_req or d < first_by_req[rid]:
             first_by_req[rid] = d
@@ -117,9 +120,11 @@ def api_calendar_stats():
                 'pending_count': 0,
                 'deltas': [],
             }
-        if att.status == 'confirmed' and att.delta_seconds is not None:
-            data[url]['confirmed_count'] += 1
-            data[url]['deltas'].append(att.delta_seconds)
+        if att.status == 'confirmed' and att.confirmed_at is not None:
+            d = att.delta_seconds
+            if d is not None:
+                data[url]['confirmed_count'] += 1
+                data[url]['deltas'].append(d)
         else:
             data[url]['pending_count'] += 1
 
@@ -162,7 +167,7 @@ def api_timeline():
 
     result = []
     for req in reqs:
-        deltas = [a.delta_seconds for a in req.attestations if a.delta_seconds is not None]
+        deltas = [d for a in req.attestations if (d := a.delta_seconds) is not None]
         if not deltas:
             continue
         result.append({
@@ -184,7 +189,7 @@ def api_calendar_timeline():
         db.session.query(CalendarAttestation, TimestampRequest)
         .join(TimestampRequest, CalendarAttestation.request_id == TimestampRequest.id)
         .filter(CalendarAttestation.status == 'confirmed',
-                CalendarAttestation.delta_seconds.isnot(None))
+                CalendarAttestation.confirmed_at.isnot(None))
     )
     if date_from:
         try:
@@ -210,7 +215,7 @@ def api_calendar_timeline():
             }
         by_cal[url]['points'].append({
             'created_at': req.created_at.replace(tzinfo=timezone.utc).isoformat(),
-            'delta_seconds': att.delta_seconds,
+            'delta_seconds': att.delta_seconds,  # computed from confirmed_at and filename
             'filename': req.filename,
         })
 
@@ -226,6 +231,16 @@ def api_requests():
     calendar_filter = request.args.get('calendar', '')
     date_from       = request.args.get('date_from', '')
     date_to         = request.args.get('date_to', '')
+    sort_by  = request.args.get('sort_by', 'created_at')
+    sort_dir = request.args.get('sort_dir', 'desc')
+
+    _sort_cols = {
+        'id':         TimestampRequest.id,
+        'created_at': TimestampRequest.created_at,
+        'status':     TimestampRequest.status,
+    }
+    sort_col = _sort_cols.get(sort_by, TimestampRequest.created_at)
+    order_expr = sort_col.asc() if sort_dir == 'asc' else sort_col.desc()
 
     query = TimestampRequest.query
 
@@ -249,7 +264,7 @@ def api_requests():
 
     total = query.count()
     reqs  = (
-        query.order_by(TimestampRequest.created_at.desc())
+        query.order_by(order_expr)
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()

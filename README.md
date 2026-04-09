@@ -26,6 +26,8 @@ A Flask web application that submits files to [OpenTimestamps](https://opentimes
 
 Every 10 minutes a cron job creates a small text file, submits it to the standard OTS calendar servers via `ots-cli.js`, and records the pending request in a database. A second cron job tries to upgrade every pending proof; when a calendar server returns a Bitcoin block attestation the confirmation time is saved. The web UI provides three views and a JSON API.
 
+All timestamps — file creation and block confirmation — are stored and displayed in **GMT (UTC)**.
+
 ---
 
 ## How OpenTimestamps works
@@ -38,7 +40,7 @@ OpenTimestamps is an open protocol for trustlessly proving that a piece of data 
 
 3. **Verifying** — `ots-cli.js v <file>.ots` confirms the proof against the Bitcoin blockchain without trusting the calendar servers.
 
-OpenTimeStats automates steps 1 and 2, and records the time between stamping and each calendar's attestation so you can compare calendar responsiveness over time.
+OpenTimeStats automates steps 1 and 2, parses the resulting `.ots` file to extract the confirmed Bitcoin block height, fetches the block's mined-at timestamp from the mempool.space public API, and records that as the authoritative confirmation time.
 
 ---
 
@@ -121,7 +123,7 @@ GRANT ALL PRIVILEGES ON opentimestats.* TO 'opentimestats'@'localhost';
 ### First time
 
 ```bash
-flask db upgrade        # applies the single initial migration
+flask db upgrade        # applies all migrations in order
 ```
 
 If you prefer to skip the migration system entirely and just create the tables directly:
@@ -179,9 +181,8 @@ Runs every 10 minutes. Steps:
 1. Generates a filename from the current Unix timestamp: `{unix_ts}.txt`.
 2. Writes the file to `app/static/files/` with a short human-readable header.
 3. Calls `ots-cli.js s <filepath>`, which contacts the calendar servers and writes `<filepath>.ots`.
-4. Parses the `ots-cli.js` output for `"Submitting to remote calendar <url>"` lines to record which calendars were contacted.
-5. Inserts a `TimestampRequest` row (`status = pending`) and one `CalendarAttestation` row per calendar (`status = pending`) into the database.
-6. If `ots-cli.js` fails and no calendars were contacted, the `.txt` file is deleted and the script exits with an error.
+4. Inserts a `TimestampRequest` row (`status = pending`) and one `CalendarAttestation` row per calendar (`status = pending`) into the database.
+5. If `ots-cli.js` fails and no calendars were contacted, the `.txt` file is deleted and the script exits with an error.
 
 ### `scripts/update_timestamps.py`
 
@@ -190,13 +191,34 @@ Runs every 10 minutes (offset). Steps:
 1. Queries all `TimestampRequest` rows whose status is not `complete`.
 2. For each request, calls `ots-cli.js u <filepath>.ots` to attempt upgrading the proof.
 3. Parses `"Got N attestation(s) from <url>"` lines in the output. For each newly confirmed calendar:
-   - Sets `CalendarAttestation.status = confirmed`
-   - Records `confirmed_at` (current UTC time), `block_height` (parsed from the output), and `delta_seconds` (elapsed seconds since the file was created).
-4. If `"Success! Timestamp complete"` appears, any remaining pending calendars for that request are also marked confirmed.
-5. Updates the parent `TimestampRequest.status`:
+   - Reads the upgraded `.ots` file using the Python `opentimestamps` library to extract the confirmed Bitcoin block height.
+   - Fetches the block's mined-at timestamp from the [mempool.space](https://mempool.space) public API.
+   - Sets `CalendarAttestation.status = confirmed`, `confirmed_at` (block mined time in GMT), `block_height`, `block_hash`, and `delta_seconds` (seconds from file creation to block confirmation).
+4. Updates the parent `TimestampRequest.status`:
    - `partial` — at least one calendar confirmed, but not all
    - `complete` — all calendars confirmed
-6. Requests already marked `complete` are skipped entirely and never processed again.
+5. Requests already marked `complete` are skipped entirely.
+
+### `scripts/fix_block_timestamps.py`
+
+One-shot backfill script for existing records that are missing `block_height`, `block_hash`, or have an inaccurate `confirmed_at`. Run it manually after schema upgrades or to correct historical data.
+
+```bash
+source venv/bin/activate
+
+# Dry-run (prints what would change, no writes)
+python scripts/fix_block_timestamps.py
+
+# Apply changes
+python scripts/fix_block_timestamps.py --commit
+```
+
+For each confirmed attestation the script:
+
+1. If a `.ots` or `.ots.bak` file exists — parses the block height directly from the Bitcoin attestation embedded in the proof.
+2. Otherwise — binary-searches the Bitcoin blockchain (via mempool.space) for the block mined closest to the file's creation time.
+3. Fetches the block hash and mined-at timestamp from mempool.space.
+4. Updates `block_height`, `block_hash`, `confirmed_at` (GMT), and `delta_seconds`.
 
 ---
 
@@ -236,17 +258,19 @@ Each dot represents one timestamped file. The X-axis is the file creation date; 
 
 ### Table (`/table`)
 
-A server-side paginated (25 rows per page) table of all requests. Columns:
+A server-side paginated (25 rows per page) table of all requests. All dates are displayed in **GMT**.
+
+Columns:
 
 | Column | Description |
 |---|---|
-| # | Request ID |
+| # | Request ID (sortable) |
 | File | Filename (`{unix_ts}.txt`) |
-| Created (UTC) | Timestamp when the file was created |
-| Status | `pending` / `partial` / `complete` badge |
-| First confirm | Time to the first calendar attestation |
-| Download | File and proof download buttons (see below) |
-| *[calendar name]* | One column per known calendar — shows delta or "pending" |
+| Created (GMT) | Timestamp when the file was created (sortable) |
+| Status | `pending` / `partial` / `complete` badge (sortable) |
+| First confirm | Delta to first attestation, confirmation date (GMT), and block height |
+| Download | File and proof download buttons |
+| *[calendar name]* | One column per known calendar — delta, confirmation date (GMT), and block height linked to blockstream.info |
 
 **Filters** — combinable:
 
@@ -256,20 +280,20 @@ A server-side paginated (25 rows per page) table of all requests. Columns:
 | Calendar | Restrict to requests that involved a specific calendar |
 | From / To | Date range (also controlled by the preset buttons) |
 
-The same four preset buttons (Last day / Last week / Last month / Last year) appear above the filters; **Last week is the default** on page load. The `×` reset button clears all filters and preset selection.
+Clicking the `#`, `Created`, or `Status` column headers sorts the table ascending/descending. The active sort column is highlighted with an arrow indicator.
 
 ---
 
 ## API reference
 
-All endpoints return JSON. No authentication is required.
+All endpoints return JSON. No authentication is required. All datetime fields are ISO 8601 strings in UTC (e.g. `2026-04-07T08:25:25+00:00`).
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/overview` | High-level counters and averages for the dashboard |
 | `GET` | `/api/calendar-stats` | Per-calendar min / median / avg / max confirmation time |
 | `GET` | `/api/timeline` | First-confirmation delta per file (scatter chart data) |
-| `GET` | `/api/requests` | Paginated, filterable request list with attestation detail |
+| `GET` | `/api/requests` | Paginated, filterable, sortable request list with attestation detail |
 | `GET` | `/api/calendars` | Distinct calendar URLs and short names seen so far |
 | `POST` | `/api/create-now` | Create and stamp a new file immediately |
 | `GET` | `/download/<filename>` | Download a `.txt` file or `.ots` proof (see below) |
@@ -309,6 +333,20 @@ All endpoints return JSON. No authentication is required.
 | `calendar` | string | — | Filter by exact calendar URL |
 | `date_from` | ISO 8601 | — | Earliest `created_at` to include |
 | `date_to` | ISO 8601 | — | Latest `created_at` to include |
+| `sort_by` | string | `created_at` | Sort column: `id`, `created_at`, or `status` |
+| `sort_dir` | string | `desc` | Sort direction: `asc` or `desc` |
+
+### `GET /api/requests` — attestation fields (per calendar)
+
+| Field | Type | Description |
+|---|---|---|
+| `calendar_url` | string | Full calendar URL |
+| `calendar_name` | string | Short display name |
+| `status` | string | `pending` or `confirmed` |
+| `confirmed_at` | ISO 8601\|null | Bitcoin block mined-at time (GMT) |
+| `block_height` | int\|null | Bitcoin block number |
+| `block_hash` | string\|null | Bitcoin block hash (hex, 64 chars) |
+| `delta_seconds` | float\|null | Seconds from file creation to block confirmation |
 
 ### `GET /api/timeline` — query parameters
 
@@ -338,7 +376,7 @@ In the UI, each request row shows two icon buttons:
 | Icon | Button | Enabled when |
 |---|---|---|
 | `bi-file-text` | Download file | Always |
-| `bi-shield-check` (blue) | Download OTS proof | Always — the `.ots` file is created at stamp time and contains the pending calendar attestations even before Bitcoin confirms |
+| `bi-shield-check` (blue) | Download OTS proof | Always — the `.ots` file contains pending calendar attestations even before Bitcoin confirms |
 
 ---
 
@@ -348,7 +386,8 @@ In the UI, each request row shows two icon buttons:
 TimestampRequest
   id            INTEGER   PK
   filename      VARCHAR   unique — e.g. "1746279007.txt"
-  created_at    DATETIME  UTC, set at stamp time
+                          the stem is the Unix epoch of creation (authoritative, timezone-free)
+  created_at    DATETIME  stored in server local time; use the filename stem for UTC calculations
   status        VARCHAR   pending | partial | complete
 
 CalendarAttestation
@@ -356,9 +395,10 @@ CalendarAttestation
   request_id    INTEGER   FK → TimestampRequest.id
   calendar_url  VARCHAR   e.g. "https://alice.btc.calendar.opentimestamps.org"
   status        VARCHAR   pending | confirmed
-  confirmed_at  DATETIME  UTC — when the update script detected the attestation
+  confirmed_at  DATETIME  GMT — mined-at timestamp of the confirming Bitcoin block
   block_height  INTEGER   Bitcoin block number (nullable until confirmed)
-  delta_seconds FLOAT     seconds between file creation and confirmation detection
+  block_hash    VARCHAR   Bitcoin block hash, 64 hex chars (nullable until confirmed)
+  delta_seconds FLOAT     seconds from file creation (filename epoch) to block confirmation
 ```
 
 `TimestampRequest.status` state machine:
@@ -367,7 +407,7 @@ CalendarAttestation
 pending  ──(first calendar confirms)──►  partial  ──(all calendars confirm)──►  complete
 ```
 
-**Note on `delta_seconds` accuracy** — the value measures the interval between file creation and the moment the update script next ran and found the attestation, not the exact moment the Bitcoin transaction was mined. With the cron schedule above the measurement error is at most 10 minutes (one cron cycle).
+**`delta_seconds` accuracy** — measures the interval between the Unix epoch embedded in the filename and the Bitcoin block's mined-at timestamp (fetched from mempool.space). This reflects the actual time the blockchain confirmed the attestation, independent of when the monitoring script happened to run.
 
 ---
 
@@ -381,7 +421,8 @@ opentimestats.org/
 ├── .env                            # Local environment variables — do not commit
 ├── migrations/
 │   └── versions/
-│       └── 0001_initial_schema.py  # Single migration: creates both tables
+│       ├── 0001_initial_schema.py  # Creates timestamp_requests and calendar_attestations
+│       └── 0002_add_block_hash.py  # Adds block_hash column to calendar_attestations
 ├── app/
 │   ├── __init__.py                 # Empty package marker
 │   ├── models.py                   # TimestampRequest, CalendarAttestation
@@ -390,12 +431,13 @@ opentimestats.org/
 │   │   ├── base.html               # Bootstrap 5 navbar, Chart.js CDN, shared JS utils
 │   │   ├── index.html              # Dashboard
 │   │   ├── charts.html             # Charts with date-range presets
-│   │   └── table.html              # Paginated, filterable table
+│   │   └── table.html              # Paginated, filterable, sortable table
 │   └── static/
 │       ├── css/style.css           # Minimal overrides on top of Bootstrap
 │       ├── js/charts.js            # Chart.js data loading and rendering
 │       └── files/                  # Runtime: .txt files and .ots proofs stored here
 └── scripts/
     ├── create_timestamp.py         # Cron: create file, call ots stamp, insert DB row
-    └── update_timestamps.py        # Cron: upgrade proofs, record confirmations
+    ├── update_timestamps.py        # Cron: upgrade proofs, record block confirmations
+    └── fix_block_timestamps.py     # One-shot: backfill block_height/hash/confirmed_at
 ```

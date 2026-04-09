@@ -62,10 +62,10 @@
       <table class="table table-hover align-middle mb-0 small">
         <thead class="table-light" id="t-head">
           <tr>
-            <th class="ps-3 col-xs-hide">#</th>
+            <th class="ps-3 col-xs-hide sortable" data-col="id" onclick="toggleSort('id')"><span>#</span><span class="sort-icon ms-1"></span></th>
             <th>File</th>
-            <th class="col-sm-hide">Created (UTC)</th>
-            <th>Status</th>
+            <th class="col-sm-hide sortable" data-col="created_at" onclick="toggleSort('created_at')"><span>Created (GMT)</span><span class="sort-icon ms-1"></span></th>
+            <th class="sortable" data-col="status" onclick="toggleSort('status')"><span>Status</span><span class="sort-icon ms-1"></span></th>
             <th class="col-xs-hide">First confirm</th>
             <th>Download</th>
             <!-- calendar columns added by JS -->
@@ -90,7 +90,9 @@
 <script>
 const PER_PAGE = 25;
 let currentPage = 1;
-let calendars = [];
+let calendars    = [];
+let sortBy  = 'created_at';
+let sortDir = 'desc';
 
 // ── presets ────────────────────────────────────────────────────────────────
 function dateStr(d) {
@@ -141,6 +143,7 @@ async function init() {
   document.getElementById('f-to').value   = dateStr(to);
   weekBtn.classList.add('active');
 
+  updateSortIcons();
   loadTable(1);
 }
 
@@ -171,9 +174,9 @@ async function loadTable(page) {
       const a = attMap[c.url];
       if (!a) return '<td class="text-muted col-sm-hide">—</td>';
       if (a.status === 'confirmed') {
-        const bh = a.block_height ? `<br><span class="text-muted" title="block height">#${a.block_height}</span>` : '';
         const at = a.confirmed_at ? `<br><span class="text-muted">${fmtDate(a.confirmed_at)}</span>` : '';
-        return `<td class="text-success fw-semibold col-sm-hide">${fmtDelta(a.delta_seconds)}${bh}${at}</td>`;
+        const bh = a.block_height ? `<br><a href="https://blockstream.info/block-height/${a.block_height}" target="_blank" rel="noopener" class="text-muted text-decoration-none" title="View block on blockstream.info">#${a.block_height}</a>` : '';
+        return `<td class="text-success fw-semibold col-sm-hide">${fmtDelta(a.delta_seconds)}${at}${bh}</td>`;
       }
       return '<td class="text-muted fst-italic col-sm-hide">pending</td>';
     }).join('');
@@ -186,7 +189,7 @@ async function loadTable(page) {
       <td><code>${req.filename}</code></td>
       <td class="text-muted col-sm-hide">${fmtDate(req.created_at)}</td>
       <td>${statusBadge(req.status)}</td>
-      <td class="col-xs-hide">${fmtDelta(req.first_delta)}${req.first_confirmed_at ? `<br><span class="text-muted">${fmtDate(req.first_confirmed_at)}</span>` : ''}</td>
+      <td class="col-xs-hide">${fmtDelta(req.first_delta)}${req.first_confirmed_at ? `<br><span class="text-muted">${fmtDate(req.first_confirmed_at)}</span>` : ''}${req.first_block_height ? `<br><a href="https://blockstream.info/block-height/${req.first_block_height}" target="_blank" rel="noopener" class="text-muted text-decoration-none" title="View block on blockstream.info">#${req.first_block_height}</a>` : ''}</td>
       <td class="text-nowrap">${dlFile}${dlProof}</td>
       ${calCells}
     </tr>`;
@@ -195,9 +198,34 @@ async function loadTable(page) {
   renderPagination(d.pages, page);
 }
 
+// ── sort ───────────────────────────────────────────────────────────────────
+function toggleSort(col) {
+  if (sortBy === col) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortBy  = col;
+    sortDir = 'desc';
+  }
+  updateSortIcons();
+  loadTable(1);
+}
+
+function updateSortIcons() {
+  document.querySelectorAll('th.sortable').forEach(th => {
+    const icon = th.querySelector('.sort-icon');
+    if (th.dataset.col === sortBy) {
+      icon.textContent = sortDir === 'asc' ? '↑' : '↓';
+      th.classList.add('text-primary');
+    } else {
+      icon.textContent = '↕';
+      th.classList.remove('text-primary');
+    }
+  });
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 function buildParams(page) {
-  const p = new URLSearchParams({ page, per_page: PER_PAGE });
+  const p = new URLSearchParams({ page, per_page: PER_PAGE, sort_by: sortBy, sort_dir: sortDir });
   const status   = document.getElementById('f-status').value;
   const calendar = document.getElementById('f-calendar').value;
   const from     = document.getElementById('f-from').value;

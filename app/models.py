@@ -1,3 +1,4 @@
+import calendar as _cal
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from run import db
@@ -37,6 +38,7 @@ class TimestampRequest(db.Model):
             'attestations': att_dicts,
             'first_delta': min(confirmed_deltas) if confirmed_deltas else None,
             'first_confirmed_at': _utc_iso(first_att.confirmed_at) if first_att and first_att.confirmed_at else None,
+            'first_block_height': first_att.block_height if first_att else None,
             'full_delta': max(confirmed_deltas) if self.status == 'complete' and confirmed_deltas else None,
         }
 
@@ -51,12 +53,28 @@ class CalendarAttestation(db.Model):
     status = db.Column(db.String(20), nullable=False, default='pending')
     confirmed_at = db.Column(db.DateTime, nullable=True)
     block_height = db.Column(db.Integer, nullable=True)
-    # seconds between request creation and confirmation detection
-    delta_seconds = db.Column(db.Float, nullable=True)
+    block_hash   = db.Column(db.String(64), nullable=True)
 
     __table_args__ = (
         db.UniqueConstraint('request_id', 'calendar_url', name='uq_request_calendar'),
     )
+
+    @property
+    def delta_seconds(self) -> float | None:
+        """
+        Seconds from file creation (filename epoch) to Bitcoin block confirmation.
+        Computed on the fly — not stored in the database.
+        Uses calendar.timegm so the naive confirmed_at datetime is always
+        interpreted as UTC, regardless of server timezone.
+        """
+        if self.confirmed_at is None:
+            return None
+        try:
+            file_unix = int(self.request.filename.split('.')[0])
+        except (ValueError, AttributeError):
+            return None
+        confirmed_unix = _cal.timegm(self.confirmed_at.timetuple())
+        return float(confirmed_unix - file_unix)
 
     @property
     def calendar_name(self):
@@ -64,7 +82,6 @@ class CalendarAttestation(db.Model):
         url = self.calendar_url.rstrip('/')
         if url in CALENDAR_NAMES:
             return CALENDAR_NAMES[url]
-        # Fallback: first meaningful subdomain of the hostname
         try:
             host = urlparse(url).hostname or url
             first = host.split('.')[0]
@@ -80,5 +97,6 @@ class CalendarAttestation(db.Model):
             'status': self.status,
             'confirmed_at': _utc_iso(self.confirmed_at) if self.confirmed_at else None,
             'block_height': self.block_height,
+            'block_hash': self.block_hash,
             'delta_seconds': self.delta_seconds,
         }

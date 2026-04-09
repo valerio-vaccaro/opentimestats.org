@@ -82,11 +82,11 @@ function fmtDelta(s) {
 }
 function fmtDate(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString();
+  return new Date(iso).toISOString().replace('T', ' ').slice(0, 19) + ' GMT';
 }
 function fmtDateShort(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toISOString().slice(0, 10);
 }
 function statusBadge(status) {
   const cls = { complete: 'success', partial: 'warning text-dark', pending: 'secondary', confirmed: 'success' };
