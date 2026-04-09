@@ -39,14 +39,18 @@ VENV_SITE = os.path.join(
 )
 
 
+def _add_venv_to_path():
+    import glob as _glob
+    site_dirs = _glob.glob(os.path.join(VENV_SITE, 'python*', 'site-packages'))
+    for d in site_dirs:
+        if d not in sys.path:
+            sys.path.insert(0, d)
+
+
 def _get_block_height_from_ots(ots_path: str) -> Optional[int]:
     """Return the lowest Bitcoin block height embedded in a completed .ots file, or None."""
     try:
-        import glob as _glob
-        site_dirs = _glob.glob(os.path.join(VENV_SITE, 'python*', 'site-packages'))
-        for d in site_dirs:
-            if d not in sys.path:
-                sys.path.insert(0, d)
+        _add_venv_to_path()
         from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
         from opentimestamps.core.serialize import BytesDeserializationContext
         from opentimestamps.core.timestamp import DetachedTimestampFile
@@ -59,6 +63,45 @@ def _get_block_height_from_ots(ots_path: str) -> Optional[int]:
             if isinstance(att, BitcoinBlockHeaderAttestation)
         ]
         return min(heights) if heights else None
+    except Exception as exc:
+        print(f"    [ots parse] {exc}")
+    return None
+
+
+def _calendar_status_from_ots(ots_path: str) -> Optional[dict]:
+    """
+    Return {calendar_uri: block_height_or_None} by walking the .ots tree.
+
+    For each PendingAttestation node, collect all BitcoinBlockHeaderAttestations
+    reachable from that node via child ops.  If any → confirmed at min(heights).
+    If none → still pending.  Returns None on parse error.
+    """
+    try:
+        _add_venv_to_path()
+        from opentimestamps.core.notary import BitcoinBlockHeaderAttestation, PendingAttestation
+        from opentimestamps.core.serialize import BytesDeserializationContext
+        from opentimestamps.core.timestamp import DetachedTimestampFile
+        with open(ots_path, 'rb') as fh:
+            ctx = BytesDeserializationContext(fh.read())
+        det = DetachedTimestampFile.deserialize(ctx)
+
+        result = {}
+
+        def _walk(ts):
+            for att in ts.attestations:
+                if isinstance(att, PendingAttestation):
+                    uri = att.uri.rstrip('/')
+                    heights = [
+                        a.height
+                        for _, a in ts.all_attestations()
+                        if isinstance(a, BitcoinBlockHeaderAttestation)
+                    ]
+                    result[uri] = min(heights) if heights else None
+            for child in ts.ops.values():
+                _walk(child)
+
+        _walk(det.timestamp)
+        return result
     except Exception as exc:
         print(f"    [ots parse] {exc}")
     return None
@@ -155,15 +198,20 @@ def upgrade_request(req: TimestampRequest, now: datetime) -> Optional[str]:
             att.block_height = block_height
             att.block_hash   = block_hash
 
-    # Recompute status strictly from individual calendar attestations:
-    #   complete → every calendar confirmed
-    #   partial  → at least one confirmed, others still pending
-    #   pending  → none confirmed yet
-    all_atts    = req.attestations
-    confirmed_n = sum(1 for a in all_atts if a.status == 'confirmed')
-    total_n     = len(all_atts)
+    # Recompute status using only calendars that actually participate in this
+    # proof (have a PendingAttestation node in the .ots file).  Calendars that
+    # were never submitted to — or were added to the DB by mistake — are ignored.
+    cal_map = _calendar_status_from_ots(ots_path) or {}
+    if cal_map:
+        total_n     = len(cal_map)
+        confirmed_n = sum(1 for blk in cal_map.values() if blk is not None)
+    else:
+        # Fallback if tree parse failed: use DB records
+        all_atts    = req.attestations
+        total_n     = len(all_atts)
+        confirmed_n = sum(1 for a in all_atts if a.status == 'confirmed')
 
-    if total_n > 0 and confirmed_n == total_n:
+    if total_n > 0 and confirmed_n >= total_n:
         req.status = 'complete'
     elif confirmed_n > 0:
         req.status = 'partial'

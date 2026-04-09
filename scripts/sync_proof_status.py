@@ -6,28 +6,27 @@ status in the DB — without wiping data and without contacting calendar servers
 Useful to bring the DB in sync after manual .ots upgrades or after running
 `ots-cli u` by hand outside the normal update loop.
 
-What this script does
-----------------------
-For every non-complete TimestampRequest it performs two passes:
+How per-calendar block attribution works
+-----------------------------------------
+When `ots-cli u` upgrades a proof it does NOT remove a calendar's
+PendingAttestation node — it adds Bitcoin block attestations as extra ops
+BELOW that same node.  So the .ots tree ends up with:
 
-Pass 1 — detect newly-confirmed calendars
-  When `ots-cli u` upgrades a proof, each calendar that has mined a Bitcoin
-  transaction has its PendingAttestation replaced by a BitcoinBlockHeaderAttestation
-  in the .ots file.  The .bak file is the snapshot *before* the last upgrade.
+  PendingAttestation(alice)        ← node still present
+    + extra ops → BitcoinBlockHeaderAttestation(944326)   ← added on confirm
 
-  Participant list priority:
-    1. .ots.bak  — pending URIs before last upgrade = authoritative list
-    2. DB rows   — calendar_url values already recorded for this request
+  PendingAttestation(finney)       ← still truly pending (no Bitcoin below it)
 
-  Confirmed = participants no longer pending in the current .ots.
-  For each newly-confirmed calendar the block mined-at timestamp and hash
-  are fetched from mempool.space.
+This means we can determine each calendar's status and exact block from the
+.ots file alone:
 
-Pass 2 — fix block height / date for already-confirmed attestations
-  Confirmed attestations may have a wall-clock confirmed_at (set at detection
-  time) or a missing / wrong block_height.  This pass re-reads the .ots file,
-  extracts the canonical block height, fetches the real mined-at timestamp, and
-  overwrites stale values.
+  • Traverse the tree.
+  • For each PendingAttestation node, collect all BitcoinBlockHeaderAttestations
+    reachable from that node (via its child ops).
+  • If any → calendar confirmed at min(heights).
+  • If none → calendar still pending.
+
+No .bak file is required, and each calendar gets its own block height.
 
 Run with --commit to apply; default is dry-run.
 
@@ -52,8 +51,7 @@ from config import Config
 from run import create_app, db
 from app.models import CalendarAttestation, TimestampRequest
 
-FILES_DIR      = Config.FILES_DIR
-CONFIG_CALS    = {c.rstrip('/') for c in Config.OTS_CALENDARS}
+FILES_DIR = Config.FILES_DIR
 
 VENV_SITE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -61,7 +59,7 @@ VENV_SITE = os.path.join(
 )
 
 # --------------------------------------------------------------------------- #
-# OTS parsing
+# OTS tree analysis
 # --------------------------------------------------------------------------- #
 
 def _add_venv_to_path():
@@ -71,34 +69,51 @@ def _add_venv_to_path():
             sys.path.insert(0, d)
 
 
-def _parse_ots(path: str) -> dict:
+def _calendar_status_from_ots(path: str) -> Optional[dict]:
     """
-    Parse an .ots file and return:
-      {
-        'pending_uris':  [str, ...],   # PendingAttestation calendar URIs
-        'block_heights': [int, ...],   # BitcoinBlockHeaderAttestation heights
-      }
-    Returns empty lists on parse failure.
+    Traverse an .ots file and return a mapping:
+      {calendar_uri: block_height_or_None}
+
+    For each PendingAttestation node, check whether any
+    BitcoinBlockHeaderAttestation is reachable from that node via child ops.
+    If yes → confirmed at min(heights).  If no → still pending.
+
+    Returns None on parse error.
     """
     try:
         _add_venv_to_path()
         from opentimestamps.core.notary import BitcoinBlockHeaderAttestation, PendingAttestation
         from opentimestamps.core.serialize import BytesDeserializationContext
         from opentimestamps.core.timestamp import DetachedTimestampFile
+
         with open(path, 'rb') as fh:
             ctx = BytesDeserializationContext(fh.read())
-        detached = DetachedTimestampFile.deserialize(ctx)
-        pending_uris  = []
-        block_heights = []
-        for _msg, att in detached.timestamp.all_attestations():
-            if isinstance(att, PendingAttestation):
-                pending_uris.append(att.uri.rstrip('/'))
-            elif isinstance(att, BitcoinBlockHeaderAttestation):
-                block_heights.append(att.height)
-        return {'pending_uris': pending_uris, 'block_heights': block_heights}
+        det = DetachedTimestampFile.deserialize(ctx)
+
+        result: dict[str, Optional[int]] = {}
+
+        # all_attestations() yields (msg_at_that_node, attestation)
+        # We need the *node* itself to look at its child ops.
+        # Traverse manually so we have access to each Timestamp node.
+        def _walk(ts):
+            for att in ts.attestations:
+                if isinstance(att, PendingAttestation):
+                    uri = att.uri.rstrip('/')
+                    # Collect Bitcoin attestations reachable from THIS node's children
+                    heights = [
+                        a.height
+                        for _, a in ts.all_attestations()
+                        if isinstance(a, BitcoinBlockHeaderAttestation)
+                    ]
+                    result[uri] = min(heights) if heights else None
+            for child in ts.ops.values():
+                _walk(child)
+
+        _walk(det.timestamp)
+        return result
     except Exception as exc:
         print(f"    [ots parse] {path}: {exc}")
-        return {'pending_uris': [], 'block_heights': []}
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -133,146 +148,102 @@ def get_block_info(height: int) -> Optional[dict]:
 # Per-request sync
 # --------------------------------------------------------------------------- #
 
-def sync_request(req: TimestampRequest, commit: bool) -> Optional[list[str]]:
+def sync_request(req: TimestampRequest, commit: bool) -> Optional[list]:
     """
-    Sync one request by comparing .ots / .ots.bak against DB attestations.
-    Returns a list of change lines, or None if nothing changed.
+    Sync one request.  Returns a list of change-description strings,
+    or None if nothing changed.
     """
     ots_path = os.path.join(FILES_DIR, req.filename + '.ots')
-    bak_path = os.path.join(FILES_DIR, req.filename + '.ots.bak')
-
     if not os.path.exists(ots_path):
         return [f"#{req.id} {req.filename}  SKIP — no .ots file"]
 
-    # Current state of the proof
-    ots = _parse_ots(ots_path)
-    pending_now  = {u for u in ots['pending_uris']}
-    block_height = min(ots['block_heights']) if ots['block_heights'] else None
-
-    # Build the broadest possible participant set:
-    #   .bak  — URIs before last upgrade (may already be post-confirmation)
-    #   db    — calendar_url values recorded for this request
-    #   When block attestations are present, also include Config.OTS_CALENDARS so
-    #   that calendars whose PendingAttestation was removed in a prior upgrade cycle
-    #   (and is therefore absent from both .bak and DB) are still accounted for.
-    db_urls = {a.calendar_url.rstrip('/') for a in req.attestations}
-
-    if os.path.exists(bak_path):
-        bak = _parse_ots(bak_path)
-        bak_uris = {u for u in bak['pending_uris']}
-        source_tag = 'bak+db'
-    else:
-        bak_uris = set()
-        source_tag = 'db'
-
-    if block_height is not None:
-        # Confirmations have occurred: widen the net to include config calendars
-        # so we can detect URIs lost from .bak and DB across multiple upgrade cycles.
-        all_participants = bak_uris | db_urls | CONFIG_CALS
-        source_tag += '+config'
-    else:
-        all_participants = bak_uris | db_urls
-
-    confirmed_by_file = all_participants - pending_now
+    cal_map = _calendar_status_from_ots(ots_path)
+    if cal_map is None:
+        return [f"#{req.id} {req.filename}  SKIP — parse error"]
 
     att_by_url: dict[str, CalendarAttestation] = {
         a.calendar_url.rstrip('/'): a for a in req.attestations
     }
 
-    # Fetch block info once (lazy, shared across both passes)
-    binfo: Optional[dict] = None
-
-    def _ensure_binfo():
-        nonlocal binfo
-        if binfo is None and block_height is not None:
-            binfo = get_block_info(block_height)
-            time.sleep(0.2)
-
-    lines: list[str] = []
+    lines = []
 
     # ------------------------------------------------------------------ #
-    # Pass 1: detect pending → confirmed transitions
-    #   • update existing DB rows still marked pending
-    #   • create DB rows for confirmed calendars with no record at all
-    #     (happens when a calendar confirmed before the DB row was created)
+    # Pass 1 — newly confirmed (pending in DB, confirmed in file)
     # ------------------------------------------------------------------ #
-    newly_confirmed = [
-        url for url in confirmed_by_file
-        if url not in att_by_url or att_by_url[url].status != 'confirmed'
-    ]
+    for uri, blk in cal_map.items():
+        if blk is None:
+            continue  # still pending in the .ots file
+        att = att_by_url.get(uri)
+        if att and att.status == 'confirmed':
+            continue  # already confirmed in DB — handled by Pass 2
 
-    if newly_confirmed:
-        _ensure_binfo()
-        for url in newly_confirmed:
-            if url in att_by_url:
-                att = att_by_url[url]
-            else:
-                att = CalendarAttestation(
-                    request_id=req.id,
-                    calendar_url=url,
-                    status='pending',
-                )
-                att_by_url[url] = att
-                if commit:
-                    db.session.add(att)
-                    db.session.flush()
+        binfo = get_block_info(blk)
+        time.sleep(0.15)
 
+        if att is None:
+            att = CalendarAttestation(
+                request_id=req.id,
+                calendar_url=uri,
+                status='pending',
+            )
+            att_by_url[uri] = att
             if commit:
-                att.status       = 'confirmed'
-                att.confirmed_at = binfo['dt']   if binfo else None
-                att.block_height = block_height
-                att.block_hash   = binfo['hash'] if binfo else None
+                db.session.add(att)
+                db.session.flush()
 
-        bh_str  = f"blk={block_height}" if block_height else "blk=?"
-        cal_str = ', '.join(sorted(newly_confirmed))
+        if commit:
+            att.status       = 'confirmed'
+            att.block_height = blk
+            att.block_hash   = binfo['hash'] if binfo else None
+            att.confirmed_at = binfo['dt']   if binfo else None
+
         lines.append(
-            f"#{req.id} {req.filename}  NEW confirmed: [{cal_str}]"
-            f"  {bh_str}  [{source_tag}]"
+            f"#{req.id} {req.filename}  NEW confirmed: {uri}  blk={blk}"
         )
 
     # ------------------------------------------------------------------ #
-    # Pass 2: fix block height / confirmed_at on already-confirmed rows
+    # Pass 2 — fix stale block height / confirmed_at on confirmed rows
     # ------------------------------------------------------------------ #
-    if block_height is not None:
-        for url, att in att_by_url.items():
-            if att.status != 'confirmed':
-                continue
-            needs_fix = (
-                att.block_height != block_height
-                or att.block_hash is None
-                or att.confirmed_at is None
-            )
-            if not needs_fix:
-                continue
-            _ensure_binfo()
-            if binfo is None:
-                continue
-            old_bh  = att.block_height
-            old_dt  = att.confirmed_at.isoformat() if att.confirmed_at else 'None'
-            if commit:
-                att.block_height = block_height
-                att.block_hash   = binfo['hash']
-                att.confirmed_at = binfo['dt']
-            lines.append(
-                f"#{req.id} {req.filename}  FIX {url}"
-                f"  blk {old_bh} → {block_height}"
-                f"  confirmed_at {old_dt} → {binfo['dt'].isoformat()}"
-            )
+    for uri, blk in cal_map.items():
+        if blk is None:
+            continue
+        att = att_by_url.get(uri)
+        if att is None or att.status != 'confirmed':
+            continue
+        if att.block_height == blk and att.block_hash and att.confirmed_at:
+            continue  # already correct
+
+        binfo = get_block_info(blk)
+        time.sleep(0.15)
+        if binfo is None:
+            continue
+
+        old_bh = att.block_height
+        old_dt = att.confirmed_at.isoformat() if att.confirmed_at else 'None'
+        if commit:
+            att.block_height = blk
+            att.block_hash   = binfo['hash']
+            att.confirmed_at = binfo['dt']
+        lines.append(
+            f"#{req.id} {req.filename}  FIX {uri}"
+            f"  blk {old_bh} → {blk}"
+            f"  confirmed_at {old_dt} → {binfo['dt'].isoformat()}"
+        )
 
     if not lines:
         return None
 
+    # ------------------------------------------------------------------ #
     # Recompute request status
-    will_be_confirmed = {
-        url for url, att in att_by_url.items()
-        if att.status == 'confirmed' or url in confirmed_by_file
-    }
-    conf_n  = len(will_be_confirmed)
-    total_n = len(att_by_url)
+    # Only calendars present in the .ots file (cal_map keys) count toward
+    # the total — calendars that never participated in this proof are ignored.
+    # ------------------------------------------------------------------ #
+    total_n     = len(cal_map)
+    confirmed_n = sum(1 for blk in cal_map.values() if blk is not None)
 
-    if conf_n == 0:
+    if total_n == 0 or confirmed_n == 0:
         new_status = 'pending'
-    elif conf_n >= total_n:
+    elif confirmed_n >= total_n:
         new_status = 'complete'
     else:
         new_status = 'partial'
