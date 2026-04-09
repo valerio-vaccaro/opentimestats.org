@@ -120,6 +120,7 @@ def api_calendar_stats():
                 'calendar_name': urlparse(url).hostname or url,
                 'confirmed_count': 0,
                 'pending_count': 0,
+                'block_heights': set(),
                 'deltas': [],
             }
         if att.status == 'confirmed' and att.confirmed_at is not None:
@@ -127,6 +128,8 @@ def api_calendar_stats():
             if d is not None:
                 data[url]['confirmed_count'] += 1
                 data[url]['deltas'].append(d)
+            if att.block_height is not None:
+                data[url]['block_heights'].add(att.block_height)
         else:
             data[url]['pending_count'] += 1
 
@@ -138,6 +141,7 @@ def api_calendar_stats():
             'calendar_name': entry['calendar_name'],
             'confirmed_count': entry['confirmed_count'],
             'pending_count': entry['pending_count'],
+            'distinct_block_count': len(entry['block_heights']),
             'avg_delta': statistics.mean(deltas) if deltas else None,
             'median_delta': statistics.median(deltas) if deltas else None,
             'min_delta': min(deltas) if deltas else None,

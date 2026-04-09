@@ -34,6 +34,21 @@
   </div>
 </div>
 
+<!-- Calendar summary boxes -->
+<div id="cal-summary" class="row g-3 mb-4"></div>
+
+<!-- Confirmation rate -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white py-3">
+    <h6 class="mb-0 fw-semibold">Confirmation rate per calendar</h6>
+    <small class="text-muted d-none d-sm-block">Percentage of timestamp requests confirmed by each calendar server</small>
+  </div>
+  <div class="card-body">
+    <div id="no-rate-data" class="text-center text-muted py-5 d-none">No data yet.</div>
+    <canvas id="rateChart"></canvas>
+  </div>
+</div>
+
 <!-- Calendar performance -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-header bg-white py-3">
