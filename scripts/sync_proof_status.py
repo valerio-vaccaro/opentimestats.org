@@ -35,6 +35,8 @@ Usage:
   python scripts/sync_proof_status.py           # dry-run
   python scripts/sync_proof_status.py --commit  # apply
 """
+from __future__ import annotations
+
 import glob as _glob
 import json
 import os

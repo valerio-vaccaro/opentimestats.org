@@ -22,6 +22,8 @@ Usage:
   python scripts/fix_block_timestamps.py           # dry-run
   python scripts/fix_block_timestamps.py --commit  # apply
 """
+from __future__ import annotations
+
 import glob as _glob
 import json
 import os

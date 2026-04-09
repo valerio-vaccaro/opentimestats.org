@@ -1,5 +1,6 @@
 import calendar as _cal
 from datetime import datetime, timezone
+from typing import Optional
 from urllib.parse import urlparse
 from run import db
 
@@ -60,7 +61,7 @@ class CalendarAttestation(db.Model):
     )
 
     @property
-    def delta_seconds(self) -> float | None:
+    def delta_seconds(self) -> Optional[float]:
         """
         Seconds from file creation (filename epoch) to Bitcoin block confirmation.
         Computed on the fly — not stored in the database.

@@ -10,6 +10,8 @@ not contacted again.
 Suggested crontab (every 10 minutes, offset by 5 min from create_timestamp):
   5,15,25,35,45,55 * * * * cd /path/to/app && /path/to/venv/bin/python scripts/update_timestamps.py >> /var/log/ots_update.log 2>&1
 """
+from __future__ import annotations
+
 import json
 import os
 import re

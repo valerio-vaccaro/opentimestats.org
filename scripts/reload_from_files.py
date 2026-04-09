@@ -24,6 +24,8 @@ Usage:
   python scripts/reload_from_files.py --commit  # apply
 """
 import glob as _glob
+from __future__ import annotations
+
 import json
 import os
 import sys
