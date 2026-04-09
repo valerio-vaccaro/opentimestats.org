@@ -23,7 +23,7 @@ CALENDARS = Config.OTS_CALENDARS
 
 
 def main():
-    now      = datetime.now(timezone.utc).replace(tzinfo=None)
+    now      = datetime.now(timezone.utc)
     filename = f"{int(now.timestamp())}.txt"
 
     os.makedirs(FILES_DIR, exist_ok=True)
