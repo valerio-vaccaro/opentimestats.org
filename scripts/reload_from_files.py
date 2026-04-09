@@ -18,10 +18,13 @@ For each <unix>.txt file the script:
        complete — all calendars confirmed
 
 Run with --commit to write to the database; default is dry-run.
+Add --clean to only wipe the database without reloading from files.
 
 Usage:
-  python scripts/reload_from_files.py           # dry-run
-  python scripts/reload_from_files.py --commit  # apply
+  python scripts/reload_from_files.py                    # dry-run (full reload)
+  python scripts/reload_from_files.py --commit           # wipe + reload
+  python scripts/reload_from_files.py --clean            # dry-run (clean only)
+  python scripts/reload_from_files.py --clean --commit   # wipe only
 """
 from __future__ import annotations
 
@@ -121,19 +124,11 @@ def get_block_info(height: int) -> dict | None:
 # --------------------------------------------------------------------------- #
 
 def main():
-    commit = '--commit' in sys.argv
+    commit     = '--commit' in sys.argv
+    clean_only = '--clean'  in sys.argv
+
     if not commit:
         print("DRY-RUN mode — pass --commit to write changes to the DB\n")
-
-    # Collect .txt files sorted by filename (= chronological order)
-    txt_files = sorted(
-        f for f in os.listdir(FILES_DIR) if f.endswith('.txt')
-    )
-    if not txt_files:
-        print(f"No .txt files found in {FILES_DIR}. Nothing to do.")
-        return
-
-    print(f"Found {len(txt_files)} .txt file(s) in {FILES_DIR}\n")
 
     app = create_app()
     with app.app_context():
@@ -141,16 +136,34 @@ def main():
         # ------------------------------------------------------------------ #
         # Wipe existing data
         # ------------------------------------------------------------------ #
+        att_count = CalendarAttestation.query.count()
+        req_count = TimestampRequest.query.count()
+
         if commit:
             print("Wiping existing database rows …")
             db.session.execute(db.text('DELETE FROM calendar_attestations'))
             db.session.execute(db.text('DELETE FROM timestamp_requests'))
             db.session.commit()
-            print("Done.\n")
+            print(f"Deleted {att_count} attestation(s) and {req_count} request(s).")
         else:
-            att_count = CalendarAttestation.query.count()
-            req_count = TimestampRequest.query.count()
-            print(f"(dry-run) Would delete {att_count} attestation(s) and {req_count} request(s).\n")
+            print(f"(dry-run) Would delete {att_count} attestation(s) and {req_count} request(s).")
+
+        if clean_only:
+            if not commit:
+                print("Re-run with --clean --commit to apply.")
+            return
+
+        print()
+
+        # Collect .txt files sorted by filename (= chronological order)
+        txt_files = sorted(
+            f for f in os.listdir(FILES_DIR) if f.endswith('.txt')
+        )
+        if not txt_files:
+            print(f"No .txt files found in {FILES_DIR}. Nothing to do.")
+            return
+
+        print(f"Found {len(txt_files)} .txt file(s) in {FILES_DIR}\n")
 
         # ------------------------------------------------------------------ #
         # Rebuild from files
