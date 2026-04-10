@@ -47,27 +47,6 @@ def _add_venv_to_path():
             sys.path.insert(0, d)
 
 
-def _get_block_height_from_ots(ots_path: str) -> Optional[int]:
-    """Return the lowest Bitcoin block height embedded in a completed .ots file, or None."""
-    try:
-        _add_venv_to_path()
-        from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
-        from opentimestamps.core.serialize import BytesDeserializationContext
-        from opentimestamps.core.timestamp import DetachedTimestampFile
-        with open(ots_path, 'rb') as fh:
-            ctx = BytesDeserializationContext(fh.read())
-        detached = DetachedTimestampFile.deserialize(ctx)
-        heights = [
-            att.height
-            for _msg, att in detached.timestamp.all_attestations()
-            if isinstance(att, BitcoinBlockHeaderAttestation)
-        ]
-        return min(heights) if heights else None
-    except Exception as exc:
-        print(f"    [ots parse] {exc}")
-    return None
-
-
 def _calendar_status_from_ots(ots_path: str) -> Optional[dict]:
     """
     Return {calendar_uri: block_height_or_None} by walking the .ots tree.
@@ -168,18 +147,10 @@ def upgrade_request(req: TimestampRequest, now: datetime) -> Optional[str]:
 
     newly_confirmed = {url.rstrip('/') for url in _ATT_RE.findall(output)}
 
-    # Derive block height, hash and mined-at timestamp from the .ots file so we
-    # use the real block time instead of the wall-clock detection time.
-    block_height: Optional[int]   = None
-    block_hash:   Optional[str]   = None
-    block_time:   Optional[datetime] = None
-    if newly_confirmed:
-        block_height = _get_block_height_from_ots(ots_path)
-        if block_height is not None:
-            binfo = _get_block_info(block_height)
-            if binfo is not None:
-                block_hash = binfo['hash']
-                block_time = binfo['dt']
+    # Parse the .ots tree once to get per-calendar block heights.  Each
+    # PendingAttestation node may resolve to a different block height, so we
+    # must not use a single global minimum across the whole file.
+    cal_map = _calendar_status_from_ots(ots_path) or {}
 
     # Only mark a calendar confirmed when it explicitly appears in the output.
     # "Success! Timestamp complete" means ≥1 Bitcoin attestation exists — NOT
@@ -192,16 +163,23 @@ def upgrade_request(req: TimestampRequest, now: datetime) -> Optional[str]:
             db.session.flush()
             att_by_url[url] = att
         if att.status != 'confirmed':
-            confirmed_time   = block_time if block_time is not None else now
+            # Look up the block height for this specific calendar from the .ots tree.
+            block_height: Optional[int]      = cal_map.get(url)
+            block_hash:   Optional[str]      = None
+            block_time:   Optional[datetime] = None
+            if block_height is not None:
+                binfo = _get_block_info(block_height)
+                if binfo is not None:
+                    block_hash = binfo['hash']
+                    block_time = binfo['dt']
             att.status       = 'confirmed'
-            att.confirmed_at = confirmed_time
+            att.confirmed_at = block_time if block_time is not None else now
             att.block_height = block_height
             att.block_hash   = block_hash
 
     # Recompute status using only calendars that actually participate in this
     # proof (have a PendingAttestation node in the .ots file).  Calendars that
     # were never submitted to — or were added to the DB by mistake — are ignored.
-    cal_map = _calendar_status_from_ots(ots_path) or {}
     if cal_map:
         total_n     = len(cal_map)
         confirmed_n = sum(1 for blk in cal_map.values() if blk is not None)
@@ -225,8 +203,8 @@ def upgrade_request(req: TimestampRequest, now: datetime) -> Optional[str]:
     for url, att in sorted(att_by_url.items()):
         name = att.calendar_name
         if url in newly_confirmed:
-            bh = f" blk={block_height}" if block_height else ""
-            src = " (block time)" if block_time is not None else " (wall clock)"
+            bh  = f" blk={att.block_height}" if att.block_height else ""
+            src = " (block time)" if att.confirmed_at != now else " (wall clock)"
             cal_parts.append(f"✓{name}(+{fmt_delta(att.delta_seconds)}{bh}{src})")
         elif att.status == 'confirmed':
             cal_parts.append(f"={name}")
