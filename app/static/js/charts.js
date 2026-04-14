@@ -347,10 +347,16 @@ async function loadCalTimelines(dateFrom, dateTo) {
   const data = await fetch(url).then(r => r.json());
   const container = document.getElementById('cal-timelines');
 
-  // Remove cards for calendars no longer in the result
+  // Remove cards (and their charts) for calendars no longer in the result
   const returnedUrls = new Set(data.map(d => d.calendar_url));
   container.querySelectorAll('[data-cal-url]').forEach(el => {
-    if (!returnedUrls.has(el.dataset.calUrl)) el.remove();
+    if (!returnedUrls.has(el.dataset.calUrl)) {
+      if (calTlCharts[el.dataset.calUrl]) {
+        calTlCharts[el.dataset.calUrl].destroy();
+        delete calTlCharts[el.dataset.calUrl];
+      }
+      el.remove();
+    }
   });
 
   function msToDate(ms) {
@@ -361,12 +367,14 @@ async function loadCalTimelines(dateFrom, dateTo) {
   }
 
   data.forEach((cal, idx) => {
-    const canvasId = 'calTl-' + idx;
     const color = CAL_PALETTE[idx % CAL_PALETTE.length];
 
-    // Create card if not present yet
-    if (!document.getElementById(canvasId)) {
-      const card = document.createElement('div');
+    // Look up existing card by stable calendar_url — never rely on sequential index
+    let card = Array.from(container.querySelectorAll('[data-cal-url]'))
+                    .find(el => el.dataset.calUrl === cal.calendar_url);
+
+    if (!card) {
+      card = document.createElement('div');
       card.className = 'card border-0 shadow-sm mb-4';
       card.dataset.calUrl = cal.calendar_url;
       card.innerHTML = `
@@ -375,14 +383,14 @@ async function loadCalTimelines(dateFrom, dateTo) {
           <small class="text-muted d-none d-sm-block">Each dot is one confirmed attestation. Y = minutes to confirmation.</small>
         </div>
         <div class="card-body">
-          <div id="no-calTl-${idx}" class="text-center text-muted py-5 d-none">No confirmed data yet.</div>
-          <canvas id="${canvasId}"></canvas>
+          <div class="cal-tl-nodata text-center text-muted py-5 d-none">No confirmed data yet.</div>
+          <canvas class="cal-tl-canvas"></canvas>
         </div>`;
       container.appendChild(card);
     }
 
-    const noData = document.getElementById(`no-calTl-${idx}`);
-    const canvas = document.getElementById(canvasId);
+    const noData = card.querySelector('.cal-tl-nodata');
+    const canvas  = card.querySelector('.cal-tl-canvas');
 
     if (!cal.points.length) {
       noData.classList.remove('d-none');
