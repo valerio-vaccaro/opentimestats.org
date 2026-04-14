@@ -50,16 +50,7 @@ function renderCalSummary(data) {
 
 // ── confirmation rate chart ────────────────────────────────────────────────
 
-async function loadRateChart(dateFrom, dateTo) {
-  let url = '/api/calendar-stats';
-  const p = [];
-  if (dateFrom) p.push('date_from=' + dateFrom);
-  if (dateTo)   p.push('date_to='   + dateTo);
-  if (p.length) url += '?' + p.join('&');
-
-  const data = await fetch(url).then(r => r.json());
-  renderCalSummary(data);
-
+function renderRateChart(data) {
   const noData = document.getElementById('no-rate-data');
   if (!data.length) {
     noData.classList.remove('d-none');
@@ -129,14 +120,7 @@ async function loadRateChart(dateFrom, dateTo) {
 
 // ── calendar performance chart ─────────────────────────────────────────────
 
-async function loadCalChart(dateFrom, dateTo) {
-  let url = '/api/calendar-stats';
-  const p = [];
-  if (dateFrom) p.push('date_from=' + dateFrom);
-  if (dateTo)   p.push('date_to='   + dateTo);
-  if (p.length) url += '?' + p.join('&');
-
-  const data = await fetch(url).then(r => r.json());
+function renderCalChart(data) {
   const confirmed = data.filter(d => d.avg_delta !== null);
 
   const noData = document.getElementById('no-cal-data');
@@ -154,6 +138,7 @@ async function loadCalChart(dateFrom, dateTo) {
   if (calChart) calChart.destroy();
   calChart = new Chart(document.getElementById('calChart'), {
     type: 'bar',
+    plugins: [ChartDataLabels],
     data: {
       labels,
       datasets: [
@@ -195,6 +180,13 @@ async function loadCalChart(dateFrom, dateTo) {
             label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? '—'} min`,
           },
         },
+        datalabels: {
+          anchor: 'end',
+          align: 'top',
+          formatter: value => value !== null ? value.toFixed(1) : '',
+          font: { size: 10 },
+          color: '#555',
+        },
       },
       scales: {
         y: {
@@ -207,6 +199,21 @@ async function loadCalChart(dateFrom, dateTo) {
       },
     },
   });
+}
+
+// ── fetch calendar stats once, render all dependent views ──────────────────
+
+async function loadCalendarStats(dateFrom, dateTo) {
+  let url = '/api/calendar-stats';
+  const p = [];
+  if (dateFrom) p.push('date_from=' + dateFrom);
+  if (dateTo)   p.push('date_to='   + dateTo);
+  if (p.length) url += '?' + p.join('&');
+
+  const data = await fetch(url).then(r => r.json());
+  renderCalSummary(data);
+  renderRateChart(data);
+  renderCalChart(data);
 }
 
 // ── timeline scatter chart ─────────────────────────────────────────────────
@@ -421,8 +428,7 @@ async function loadCharts() {
   const dateFrom = document.getElementById('cf-from').value;
   const dateTo   = document.getElementById('cf-to').value;
   await Promise.all([
-    loadRateChart(dateFrom, dateTo),
-    loadCalChart(dateFrom, dateTo),
+    loadCalendarStats(dateFrom, dateTo),
     loadTlChart(dateFrom, dateTo),
     loadCalTimelines(dateFrom, dateTo),
   ]);
