@@ -183,7 +183,7 @@ def api_timeline():
             'first_delta': min(deltas),
             'status': req.status,
         })
-    return jsonify(result)
+    return jsonify({'total': len(reqs), 'requests': result})
 
 
 @bp.route('/api/calendar-timeline')

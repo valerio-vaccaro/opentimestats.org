@@ -21,6 +21,7 @@ function renderCalSummary(data) {
     const rate  = total > 0 ? ((d.confirmed_count / total) * 100).toFixed(1) : '0.0';
     const rateNum = parseFloat(rate);
     const badgeClass = rateNum >= 80 ? 'bg-success' : rateNum >= 40 ? 'bg-warning text-dark' : 'bg-danger';
+    const avgStr = d.avg_delta !== null ? fmtDelta(d.avg_delta) : '—';
 
     const col = document.createElement('div');
     col.className = 'col-6 col-md-4 col-lg-3';
@@ -28,7 +29,9 @@ function renderCalSummary(data) {
       <div class="card border-0 shadow-sm h-100 text-center p-3">
         <div class="fw-semibold text-truncate mb-2" title="${d.calendar_url}">${d.calendar_name}</div>
         <div class="display-6 fw-bold mb-1">${rate}<small class="fs-6 fw-normal text-muted">%</small></div>
-        <span class="badge ${badgeClass} mb-3">confirmation rate</span>
+        <span class="badge ${badgeClass} mb-2">confirmation rate</span>
+        <div class="fw-semibold mb-1">${avgStr}</div>
+        <span class="badge bg-secondary mb-3">avg confirm time</span>
         <div class="row g-0 text-muted small border-top pt-2 mt-auto">
           <div class="col border-end">
             <div class="fw-semibold text-dark">${d.confirmed_count}</div>
@@ -225,7 +228,28 @@ async function loadTlChart(dateFrom, dateTo) {
   if (dateTo)   p.push('date_to='   + dateTo);
   if (p.length) url += '?' + p.join('&');
 
-  const data = await fetch(url).then(r => r.json());
+  const resp    = await fetch(url).then(r => r.json());
+  const total   = resp.total ?? 0;
+  const data    = resp.requests ?? [];
+
+  // Update global stat box
+  const confirmed = data.length;
+  const rate      = total > 0 ? ((confirmed / total) * 100).toFixed(1) : '0.0';
+  const rateNum   = parseFloat(rate);
+  const badgeClass = rateNum >= 80 ? 'bg-success' : rateNum >= 40 ? 'bg-warning text-dark' : 'bg-danger';
+
+  document.getElementById('global-rate').textContent        = rate;
+  document.getElementById('global-rate-badge').className    = `badge ${badgeClass} mb-2`;
+  document.getElementById('global-confirmed').textContent   = confirmed;
+  document.getElementById('global-total').textContent       = total;
+
+  const avgFirstEl = document.getElementById('avg-first-confirm');
+  if (avgFirstEl) {
+    avgFirstEl.textContent = confirmed > 0
+      ? fmtDelta(data.reduce((s, d) => s + d.first_delta, 0) / confirmed)
+      : '—';
+  }
+
   const noData = document.getElementById('no-tl-data');
 
   if (!data.length) {
