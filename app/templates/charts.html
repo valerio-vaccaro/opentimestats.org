@@ -103,8 +103,17 @@
   </div>
 </div>
 
-<!-- Per-calendar timelines (injected by JS) -->
-<div id="cal-timelines"></div>
+<!-- All-calendar timeline -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white py-3">
+    <h6 class="mb-0 fw-semibold">Confirmation timeline for all calendars</h6>
+    <small class="text-muted d-none d-sm-block">Each color is one calendar. Y = minutes to confirmation.</small>
+  </div>
+  <div class="card-body">
+    <div id="no-all-cal-tl-data" class="text-center text-muted py-5 d-none">No confirmed calendar data yet.</div>
+    <canvas id="allCalTlChart"></canvas>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

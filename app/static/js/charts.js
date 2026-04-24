@@ -3,7 +3,7 @@
 let rateChart = null;
 let calChart  = null;
 let tlChart   = null;
-const calTlCharts = {};   // keyed by calendar_url
+let allCalTlChart = null;
 
 const COLORS = {
   complete: 'rgba(40,167,69,0.85)',
@@ -326,18 +326,14 @@ async function loadTlChart(dateFrom, dateTo) {
   });
 }
 
-// ── per-calendar timeline charts ───────────────────────────────────────────
+// ── combined all-calendars timeline chart ──────────────────────────────────
 
-const CAL_PALETTE = [
-  'rgba(54,162,235,0.8)',
-  'rgba(255,99,132,0.8)',
-  'rgba(75,192,192,0.8)',
-  'rgba(255,159,64,0.8)',
-  'rgba(153,102,255,0.8)',
-  'rgba(255,205,86,0.8)',
-];
+function calColor(idx, alpha = 0.85) {
+  const hue = (idx * 47) % 360;
+  return `hsla(${hue}, 70%, 48%, ${alpha})`;
+}
 
-async function loadCalTimelines(dateFrom, dateTo) {
+async function loadAllCalTimelines(dateFrom, dateTo) {
   let url = '/api/calendar-timeline';
   const p = [];
   if (dateFrom) p.push('date_from=' + dateFrom);
@@ -345,19 +341,8 @@ async function loadCalTimelines(dateFrom, dateTo) {
   if (p.length) url += '?' + p.join('&');
 
   const data = await fetch(url).then(r => r.json());
-  const container = document.getElementById('cal-timelines');
-
-  // Remove cards (and their charts) for calendars no longer in the result
-  const returnedUrls = new Set(data.map(d => d.calendar_url));
-  container.querySelectorAll('[data-cal-url]').forEach(el => {
-    if (!returnedUrls.has(el.dataset.calUrl)) {
-      if (calTlCharts[el.dataset.calUrl]) {
-        calTlCharts[el.dataset.calUrl].destroy();
-        delete calTlCharts[el.dataset.calUrl];
-      }
-      el.remove();
-    }
-  });
+  const noData = document.getElementById('no-all-cal-tl-data');
+  const canvas = document.getElementById('allCalTlChart');
 
   function msToDate(ms) {
     const d = new Date(ms);
@@ -366,91 +351,73 @@ async function loadCalTimelines(dateFrom, dateTo) {
     return `${date} ${time}`;
   }
 
-  data.forEach((cal, idx) => {
-    const color = CAL_PALETTE[idx % CAL_PALETTE.length];
+  const datasets = data
+    .map((cal, idx) => {
+      const pts = (cal.points || []).map(p => ({
+        x: new Date(p.created_at).getTime(),
+        y: +(p.delta_seconds / 60).toFixed(2),
+        filename: p.filename,
+      }));
+      if (!pts.length) return null;
+      const color = calColor(idx);
+      return {
+        label: cal.calendar_name,
+        data: pts,
+        backgroundColor: color,
+        borderColor: color,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        showLine: true,
+        tension: 0.25,
+      };
+    })
+    .filter(Boolean);
 
-    // Look up existing card by stable calendar_url — never rely on sequential index
-    let card = Array.from(container.querySelectorAll('[data-cal-url]'))
-                    .find(el => el.dataset.calUrl === cal.calendar_url);
-
-    if (!card) {
-      card = document.createElement('div');
-      card.className = 'card border-0 shadow-sm mb-4';
-      card.dataset.calUrl = cal.calendar_url;
-      card.innerHTML = `
-        <div class="card-header bg-white py-3">
-          <h6 class="mb-0 fw-semibold">${cal.calendar_name} — confirmation timeline</h6>
-          <small class="text-muted d-none d-sm-block">Each dot is one confirmed attestation. Y = minutes to confirmation.</small>
-        </div>
-        <div class="card-body">
-          <div class="cal-tl-nodata text-center text-muted py-5 d-none">No confirmed data yet.</div>
-          <canvas class="cal-tl-canvas"></canvas>
-        </div>`;
-      container.appendChild(card);
+  if (!datasets.length) {
+    noData.classList.remove('d-none');
+    canvas.classList.add('d-none');
+    if (allCalTlChart) {
+      allCalTlChart.destroy();
+      allCalTlChart = null;
     }
+    return;
+  }
 
-    const noData = card.querySelector('.cal-tl-nodata');
-    const canvas  = card.querySelector('.cal-tl-canvas');
+  noData.classList.add('d-none');
+  canvas.classList.remove('d-none');
 
-    if (!cal.points.length) {
-      noData.classList.remove('d-none');
-      canvas.classList.add('d-none');
-      if (calTlCharts[cal.calendar_url]) { calTlCharts[cal.calendar_url].destroy(); delete calTlCharts[cal.calendar_url]; }
-      return;
-    }
-    noData.classList.add('d-none');
-    canvas.classList.remove('d-none');
-
-    const pts = cal.points.map(p => ({
-      x: new Date(p.created_at).getTime(),
-      y: +(p.delta_seconds / 60).toFixed(2),
-      filename: p.filename,
-    }));
-
-    if (calTlCharts[cal.calendar_url]) calTlCharts[cal.calendar_url].destroy();
-    calTlCharts[cal.calendar_url] = new Chart(canvas, {
-      type: 'scatter',
-      data: {
-        datasets: [{
-          label: cal.calendar_name,
-          data: pts,
-          backgroundColor: color,
-          borderColor: color,
-          pointRadius: 5,
-          pointHoverRadius: 7,
-          showLine: true,
-          tension: 0.3,
-        }],
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: ctx => [
-                ctx.raw.filename,
-                `Confirmed in: ${ctx.parsed.y.toFixed(1)} min`,
-              ],
-            },
-          },
-        },
-        scales: {
-          x: {
-            type: 'linear',
-            ticks: {
-              callback: val => msToDate(val),
-              maxTicksLimit: 8,
-            },
-            title: { display: true, text: 'File creation date' },
-          },
-          y: {
-            title: { display: true, text: 'Minutes to confirmation' },
-            beginAtZero: true,
+  if (allCalTlChart) allCalTlChart.destroy();
+  allCalTlChart = new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: true, position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: ctx => [
+              `${ctx.dataset.label} - ${ctx.raw.filename}`,
+              `Confirmed in: ${ctx.parsed.y.toFixed(1)} min`,
+            ],
           },
         },
       },
-    });
+      scales: {
+        x: {
+          type: 'linear',
+          ticks: {
+            callback: val => msToDate(val),
+            maxTicksLimit: 8,
+          },
+          title: { display: true, text: 'File creation date' },
+        },
+        y: {
+          title: { display: true, text: 'Minutes to confirmation' },
+          beginAtZero: true,
+        },
+      },
+    },
   });
 }
 
@@ -462,7 +429,7 @@ async function loadCharts() {
   await Promise.all([
     loadCalendarStats(dateFrom, dateTo),
     loadTlChart(dateFrom, dateTo),
-    loadCalTimelines(dateFrom, dateTo),
+    loadAllCalTimelines(dateFrom, dateTo),
   ]);
 }
 
